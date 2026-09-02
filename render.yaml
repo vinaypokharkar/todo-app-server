@@ -12,7 +12,7 @@ services:
         value: production
       - key: MONGODB_URI
         sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_BASE64
+      - key: CLERK_SECRET_KEY
         sync: false
       - key: CORS_ORIGINS
         value: "*"
