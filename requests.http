@@ -1,0 +1,50 @@
+@base = https://todo-app-server-XXXX.onrender.com
+@token = PASTE_FIREBASE_ID_TOKEN_HERE
+
+### health (public)
+GET {{base}}/health
+
+### 401 — no token
+GET {{base}}/tasks
+
+### sync profile
+POST {{base}}/auth/sync
+Authorization: Bearer {{token}}
+
+### create
+POST {{base}}/tasks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Submit assignment to Modulus",
+  "description": "Push both repos, attach the APK.",
+  "startAt": "2026-09-02T14:00:00.000Z",
+  "deadline": "2026-09-02T18:00:00.000Z",
+  "priority": "urgent",
+  "tags": ["career", "ship"]
+}
+
+### list, smart sort
+GET {{base}}/tasks?sort=smart
+Authorization: Bearer {{token}}
+
+### list, active + high only
+GET {{base}}/tasks?status=active&priority=high
+Authorization: Bearer {{token}}
+
+### search
+GET {{base}}/tasks?search=modulus
+Authorization: Bearer {{token}}
+
+### stats
+GET {{base}}/tasks/stats
+Authorization: Bearer {{token}}
+
+### toggle
+PATCH {{base}}/tasks/PASTE_ID/toggle
+Authorization: Bearer {{token}}
+
+### delete
+DELETE {{base}}/tasks/PASTE_ID
+Authorization: Bearer {{token}}
