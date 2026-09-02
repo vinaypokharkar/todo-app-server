@@ -72,6 +72,10 @@ export class TasksService {
   }
 
   private applySort(tasks: Array<Record<string, any>>, sort: string) {
+    // Every non-smart mode sinks completed tasks below active ones first (smart gets this
+    // for free from the score, which is -1 for completed) — named once so the four modes
+    // read as the same rule applied with different tiebreakers, not four hand-rolled copies.
+    const byCompletedLast = (a: any, b: any) => Number(a.completed) - Number(b.completed);
     const byDeadline = (a: any, b: any) =>
       new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
     const byCreated = (a: any, b: any) =>
@@ -79,16 +83,16 @@ export class TasksService {
 
     switch (sort) {
       case 'deadline':
-        return tasks.sort((a, b) => Number(a.completed) - Number(b.completed) || byDeadline(a, b));
+        return tasks.sort((a, b) => byCompletedLast(a, b) || byDeadline(a, b));
       case 'priority':
         return tasks.sort(
           (a, b) =>
-            Number(a.completed) - Number(b.completed) ||
+            byCompletedLast(a, b) ||
             PRIORITY_WEIGHT[b.priority as Priority] - PRIORITY_WEIGHT[a.priority as Priority] ||
             byDeadline(a, b),
         );
       case 'created':
-        return tasks.sort(byCreated);
+        return tasks.sort((a, b) => byCompletedLast(a, b) || byCreated(a, b));
       case 'smart':
       default:
         return tasks.sort(

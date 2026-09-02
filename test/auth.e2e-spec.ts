@@ -3,15 +3,15 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../src/auth/auth.module';
-import { FirebaseAuthGuard } from '../src/auth/guards/firebase-auth.guard';
-import { FirebaseModule } from '../src/firebase/firebase.module';
-import { FirebaseService } from '../src/firebase/firebase.service';
+import { ClerkAuthGuard } from '../src/auth/guards/clerk-auth.guard';
+import { ClerkModule } from '../src/clerk/clerk.module';
+import { ClerkService } from '../src/clerk/clerk.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
 import { startInMemoryMongo, stopInMemoryMongo, clearCollections } from './setup-e2e';
 
 const USER_A = 'uid-alice';
 
-/** Stub guard: reads the uid straight from the header, no Firebase involved. */
+/** Stub guard: reads the uid straight from the header, no Clerk involved. */
 class StubAuthGuard {
   canActivate(ctx: any): boolean {
     const req = ctx.switchToHttp().getRequest();
@@ -28,15 +28,28 @@ describe('Auth (e2e)', () => {
   beforeAll(async () => {
     const uri = await startInMemoryMongo();
     const moduleRef = await Test.createTestingModule({
-      imports: [MongooseModule.forRoot(uri), FirebaseModule, AuthModule],
+      imports: [MongooseModule.forRoot(uri), ClerkModule, AuthModule],
     })
-      .overrideGuard(FirebaseAuthGuard)
+      .overrideGuard(ClerkAuthGuard)
       .useClass(StubAuthGuard)
-      // FirebaseService needs real credentials to init; the stub guard never
-      // calls it, but it is still a constructor dependency of the (replaced)
-      // FirebaseAuthGuard provider, so give it a harmless stand-in.
-      .overrideProvider(FirebaseService)
-      .useValue({ auth: {} })
+      // ClerkService needs a real secret key to construct its client, but the
+      // stub guard never calls it and AuthController.sync needs a stand-in
+      // for users.getUser(), so give it a harmless mock.
+      .overrideProvider(ClerkService)
+      .useValue({
+        client: {
+          users: {
+            getUser: async (uid: string) => ({
+              primaryEmailAddress: { emailAddress: `${uid}@test.dev` },
+              emailAddresses: [],
+              firstName: 'Alice',
+              lastName: null,
+              username: null,
+              imageUrl: null,
+            }),
+          },
+        },
+      })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -51,8 +64,11 @@ describe('Auth (e2e)', () => {
   it('rejects an unauthenticated request', () =>
     request(app.getHttpServer()).get('/auth/me').expect(403));
 
-  it('returns 404 from /auth/me before any sync has happened', () =>
-    request(app.getHttpServer()).get('/auth/me').set('x-test-uid', USER_A).expect(404));
+  it('returns 404 "User not found" from /auth/me before any sync has happened', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/auth/me').set('x-test-uid', USER_A).expect(404);
+    expect(res.body.message).toBe('User not found');
+  });
 
   it('upserts the profile on /auth/sync and is idempotent', async () => {
     const first = await request(app.getHttpServer())

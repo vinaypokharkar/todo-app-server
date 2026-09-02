@@ -17,7 +17,7 @@ export type TaskDocument = HydratedDocument<Task>;
   },
 })
 export class Task {
-  /** Firebase uid of the owner. Every query filters on this. */
+  /** Clerk user id of the owner. Every query filters on this. */
   @Prop({ required: true, index: true })
   userId: string;
 

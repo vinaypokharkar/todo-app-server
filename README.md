@@ -1,12 +1,12 @@
 # todo-app-server
 
-NestJS + MongoDB backend for the Tasky to-do app. Identity is owned entirely by **Firebase
-Authentication** — this service never issues tokens, hashes passwords, or manages sessions. It
-verifies the Firebase ID token on every request and owns all task data in MongoDB.
+NestJS + MongoDB backend for the Tasky to-do app. Identity is owned entirely by **Clerk** — this
+service never issues tokens, hashes passwords, or manages sessions. It verifies the Clerk session
+token on every request and owns all task data in MongoDB.
 
 ```
-Mobile app --sign in--> Firebase Auth --ID token (JWT)--> Mobile app
-Mobile app --Authorization: Bearer <ID token>--> This API --verifyIdToken()--> firebase-admin
+Mobile app --sign in--> Clerk --session token (JWT)--> Mobile app
+Mobile app --Authorization: Bearer <session token>--> This API --verifyToken()--> @clerk/backend
 This API --queries scoped by uid--> MongoDB Atlas
 ```
 
@@ -18,7 +18,7 @@ This API --queries scoped by uid--> MongoDB Atlas
 | Framework | NestJS 11 |
 | Database | MongoDB (Atlas M0 free tier in production) |
 | ODM | Mongoose via `@nestjs/mongoose` |
-| Token verification | `firebase-admin` |
+| Token verification | `@clerk/backend` |
 | Validation | `class-validator` + `class-transformer` |
 | Testing | Jest + Supertest + `mongodb-memory-server` |
 | Hosting | Render (Web Service, free tier) |
@@ -28,7 +28,7 @@ This API --queries scoped by uid--> MongoDB Atlas
 ```bash
 npm install
 cp .env.example .env
-# fill in MONGODB_URI and FIREBASE_SERVICE_ACCOUNT_BASE64 (see below)
+# fill in MONGODB_URI and CLERK_SECRET_KEY (see below), or run `clerk env pull` after `clerk link`
 npm run start:dev
 ```
 
@@ -39,31 +39,15 @@ npm run start:dev
 | `NODE_ENV` | no | `development` locally, `production` on Render. |
 | `PORT` | no | Defaults to `3000`. Render injects its own. |
 | `MONGODB_URI` | **yes** | Include the database name, e.g. `.../tasky?retryWrites=true&w=majority`. |
-| `FIREBASE_SERVICE_ACCOUNT_BASE64` | **yes** | Base64 of the entire Firebase service-account JSON file. |
+| `CLERK_SECRET_KEY` | **yes** | From the Clerk dashboard (or `clerk env pull`). Server-side only, never expose it to a client. |
 | `CORS_ORIGINS` | no | Comma-separated origins, or `*` (fine — a native app sends no `Origin`). |
 
-Missing `MONGODB_URI` or `FIREBASE_SERVICE_ACCOUNT_BASE64` crashes the process at boot with a
-readable message (`env.validation.ts`) rather than failing confusingly on first request.
+Missing `MONGODB_URI` or `CLERK_SECRET_KEY` crashes the process at boot with a readable message
+(`env.validation.ts`) rather than failing confusingly on first request.
 
-### Why base64 for the service account
-
-The service-account JSON contains a PEM private key with literal `\n` characters. Pasting it raw
-into a hosting dashboard mangles the newlines and produces a confusing
-`error:0909006C:PEM routines:get_name:no start line` at boot. Base64 sidesteps this entirely.
-
-```bash
-# macOS / Linux
-base64 -i serviceAccountKey.json | tr -d '\n' > sa.b64
-
-# Windows PowerShell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("serviceAccountKey.json")) | Set-Content sa.b64
-```
-
-Paste the contents of `sa.b64` as `FIREBASE_SERVICE_ACCOUNT_BASE64`.
-
-**Never commit** `.env`, `*.b64`, or the raw service-account JSON — all are gitignored. If a
-service-account key is ever committed, revoke and regenerate it in the Firebase console; deleting
-the file in a later commit does not remove it from git history.
+**Never commit** `.env` — it's gitignored. If a secret key is ever committed, revoke and
+regenerate it in the Clerk dashboard; deleting the file in a later commit does not remove it from
+git history.
 
 ## Scripts
 
@@ -72,7 +56,7 @@ npm run build      # tsc build, zero errors required
 npm run start:dev  # watch mode
 npm run start:prod # node dist/main (after build)
 npm test           # unit tests (priorityScore + friends)
-npm run test:e2e   # HTTP + real in-memory Mongo, Firebase guard stubbed
+npm run test:e2e   # HTTP + real in-memory Mongo, Clerk guard stubbed
 ```
 
 `test:e2e` runs Jest through `node --experimental-vm-modules` because `@nestjs/mongoose` ships
@@ -83,12 +67,12 @@ require-of-esm support (Node ≥ 24.9). This is baked into the npm script, so a 
 ## API contract
 
 Base URL (production): `https://todo-app-server-XXXX.onrender.com`
-All endpoints except `GET /health` require `Authorization: Bearer <Firebase ID token>`.
+All endpoints except `GET /health` require `Authorization: Bearer <Clerk session token>`.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/health` | no | Liveness + DB connection state |
-| `GET` | `/auth/me` | yes | Current user profile (404 if never synced) |
+| `GET` | `/auth/me` | yes | Current user profile (`404 "User not found"` if never synced) |
 | `POST` | `/auth/sync` | yes | Upsert profile after sign-in. Idempotent. |
 | `GET` | `/tasks` | yes | List with filter / search / sort |
 | `GET` | `/tasks/stats` | yes | Aggregate counts |
@@ -117,7 +101,10 @@ No request body — everything is read from the verified token.
 
 ### `GET /auth/me`
 
-Same shape as `/auth/sync`. `404` if no profile row exists yet (client should call `/auth/sync`).
+Same shape as `/auth/sync`. `404` with `message: "User not found"` if no profile row exists yet
+— mirrors the `"Task not found"` wording used elsewhere so both 404s read the same way. The
+mobile client treats this specific case (404 from `/auth/me`) as the signal to call
+`POST /auth/sync`.
 
 ### `GET /tasks`
 
@@ -217,6 +204,7 @@ Uniform envelope from `AllExceptionsFilter`:
 | `deadline` earlier than `startAt` | 400 | `deadline must be the same as or after startAt` |
 | `:id` is not a valid ObjectId | 400 | `Invalid task id` |
 | Task not found **or owned by someone else** | 404 | `Task not found` |
+| `GET /auth/me` before any `/auth/sync` call | 404 | `User not found` |
 | Unhandled server error | 500 | `Internal server error` |
 
 **Ownership is enforced in the query filter**, never by fetch-then-compare. Requesting another
@@ -274,8 +262,8 @@ Both carry a header comment stating the mirror and the reason.
 
 - `src/shared/utils/priority-score.spec.ts` — the seven-assertion algorithm spec. Run with `npm test`.
 - `test/tasks.e2e-spec.ts`, `test/auth.e2e-spec.ts` — real HTTP requests against a real
-  `mongodb-memory-server` instance, with `FirebaseAuthGuard` swapped for a header-based stub
-  (`x-test-uid`) so no real Firebase project is needed. Run with `npm run test:e2e`.
+  `mongodb-memory-server` instance, with `ClerkAuthGuard` swapped for a header-based stub
+  (`x-test-uid`) so no real Clerk project is needed. Run with `npm run test:e2e`.
 - The e2e suite covers, among other things, the two cross-user isolation guarantees: a user
   never sees another user's tasks in a list, and fetching another user's task id returns `404`
   (not `403`).
@@ -295,8 +283,9 @@ Both carry a header comment stating the mirror and the reason.
 ### Render
 
 `render.yaml` is committed. Push the repo, connect it on Render, and fill in `MONGODB_URI` and
-`FIREBASE_SERVICE_ACCOUNT_BASE64` in the dashboard (`sync: false` means Render prompts for them
-rather than storing them in the repo).
+`CLERK_SECRET_KEY` in the dashboard (`sync: false` means Render prompts for them rather than
+storing them in the repo). Use the **production** instance's secret key, not the `pk_test_...` /
+`sk_test_...` dev pair — `clerk env pull --instance prod` if using the CLI.
 
 ### Known deployment traps
 
@@ -304,15 +293,15 @@ rather than storing them in the repo).
 |---|---|---|
 | Listening on `localhost` | Deploy shows live but every request times out | `app.listen(port, '0.0.0.0')` (already done in `main.ts`) |
 | Hardcoded port | Port scan fails | Reads `process.env.PORT` (already done) |
-| Raw service-account JSON in an env var | `PEM routines: no start line` at boot | Use the base64 variable |
+| Dev Clerk keys (`_test_`) in production | Tokens minted by the mobile app's prod build fail verification | Use the production instance's `sk_live_...` key |
 | Atlas IP allowlist too narrow | `MongoServerSelectionError` after ~10s | Allow `0.0.0.0/0` |
 | **Free-tier cold start** | First request after ~15 min idle takes 30–60s | Expected on Render's free plan — show a loading state client-side |
 | `devDependencies` pruned | `nest: not found` during build | Build with `npm ci` (installs dev deps), start with `node dist/main` |
 
 ## Security checklist
 
-- [x] `.env`, `*.b64`, and every `*serviceAccount*.json` pattern are gitignored.
-- [x] Service-account key only ever lives in an env var, never in the repo.
+- [x] `.env` is gitignored.
+- [x] `CLERK_SECRET_KEY` only ever lives in an env var, never in the repo, never sent to a client.
 - [x] Every task query filters on `userId` inside the Mongo filter (never fetch-then-compare).
 - [x] Foreign task ids return `404`, not `403`.
 - [x] `ValidationPipe` runs with `whitelist` **and** `forbidNonWhitelisted`.
@@ -324,14 +313,12 @@ rather than storing them in the repo).
 
 ## Manual smoke tests
 
-See `requests.http` (VS Code REST Client format). Get a real ID token by adding a temporary
-`console.log(await getAuth().currentUser.getIdToken())` in the mobile app after login.
+See `requests.http` (VS Code REST Client format). Get a real session token by adding a temporary
+`console.log(await getToken())` (from Clerk's `useAuth()`) in the mobile app after login.
 
 ## Notes on this build
 
-- `firebase-admin` v14 and `@nestjs/mongoose` v12 (both installed as unpinned `^` ranges per the
+- `@clerk/backend` and `@nestjs/mongoose` v12 (both installed as unpinned `^` ranges per the
   original install commands) ship modern APIs that differ from what earlier majors exposed —
   see "Deviations from the spec" in the project handoff notes for the mechanical fixes this
-  required (modular `firebase-admin/app` + `firebase-admin/auth` imports instead of the old
-  `admin.app`/`admin.auth` namespace; `QueryFilter` instead of the now-removed `FilterQuery`
-  export from `mongoose`).
+  required (`QueryFilter` instead of the now-removed `FilterQuery` export from `mongoose`).

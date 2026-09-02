@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { FirebaseModule } from './firebase/firebase.module';
+import { ClerkModule } from './clerk/clerk.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -20,7 +20,7 @@ import { validateEnv } from './config/env.validation';
         serverSelectionTimeoutMS: 10_000,
       }),
     }),
-    FirebaseModule,
+    ClerkModule,
     AuthModule,
     UsersModule,
     TasksModule,

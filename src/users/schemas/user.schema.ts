@@ -14,7 +14,7 @@ export type UserDocument = HydratedDocument<User>;
   },
 })
 export class User {
-  /** Firebase uid. The join key between Firebase identity and our data. */
+  /** Clerk user id. The join key between Clerk identity and our data. */
   @Prop({ required: true, unique: true, index: true })
   uid: string;
 

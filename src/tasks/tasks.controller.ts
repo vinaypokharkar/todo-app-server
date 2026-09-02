@@ -1,7 +1,8 @@
 import {
   Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards,
 } from '@nestjs/common';
-import { FirebaseAuthGuard } from '../auth/guards/firebase-auth.guard';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ClerkAuthGuard } from '../auth/guards/clerk-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/types/authenticated-user';
 import { TasksService } from './tasks.service';
@@ -9,8 +10,10 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 
+@ApiTags('tasks')
+@ApiBearerAuth()
 @Controller('tasks')
-@UseGuards(FirebaseAuthGuard) // applies to every route in this controller
+@UseGuards(ClerkAuthGuard) // applies to every route in this controller
 export class TasksController {
   constructor(private readonly tasks: TasksService) {}
 

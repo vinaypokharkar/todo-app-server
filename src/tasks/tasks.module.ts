@@ -8,7 +8,7 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Task.name, schema: TaskSchema }]),
-    AuthModule, // provides FirebaseAuthGuard used by @UseGuards in the controller
+    AuthModule, // provides ClerkAuthGuard used by @UseGuards in the controller
   ],
   controllers: [TasksController],
   providers: [TasksService],

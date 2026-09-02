@@ -7,7 +7,7 @@ export const CurrentUser = createParamDecorator(
     const request = ctx.switchToHttp().getRequest<Request>();
     if (!request.user) {
       // Reaching here means a controller used @CurrentUser() without the guard.
-      throw new InternalServerErrorException('CurrentUser used without FirebaseAuthGuard');
+      throw new InternalServerErrorException('CurrentUser used without ClerkAuthGuard');
     }
     return request.user;
   },

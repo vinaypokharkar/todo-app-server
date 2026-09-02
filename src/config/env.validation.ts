@@ -11,8 +11,8 @@ class EnvVars {
   @IsString() @IsNotEmpty({ message: 'MONGODB_URI is required' })
   MONGODB_URI: string;
 
-  @IsString() @IsNotEmpty({ message: 'FIREBASE_SERVICE_ACCOUNT_BASE64 is required' })
-  FIREBASE_SERVICE_ACCOUNT_BASE64: string;
+  @IsString() @IsNotEmpty({ message: 'CLERK_SECRET_KEY is required' })
+  CLERK_SECRET_KEY: string;
 
   @IsOptional() @IsString()
   CORS_ORIGINS?: string;

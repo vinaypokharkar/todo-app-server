@@ -2,17 +2,17 @@ import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { MongooseModule } from '@nestjs/mongoose';
-import { FirebaseModule } from '../src/firebase/firebase.module';
+import { ClerkModule } from '../src/clerk/clerk.module';
 import { TasksModule } from '../src/tasks/tasks.module';
-import { FirebaseAuthGuard } from '../src/auth/guards/firebase-auth.guard';
-import { FirebaseService } from '../src/firebase/firebase.service';
+import { ClerkAuthGuard } from '../src/auth/guards/clerk-auth.guard';
+import { ClerkService } from '../src/clerk/clerk.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
 import { startInMemoryMongo, stopInMemoryMongo, clearCollections } from './setup-e2e';
 
 const USER_A = 'uid-alice';
 const USER_B = 'uid-bob';
 
-/** Stub guard: reads the uid straight from the header, no Firebase involved. */
+/** Stub guard: reads the uid straight from the header, no Clerk involved. */
 class StubAuthGuard {
   canActivate(ctx: any): boolean {
     const req = ctx.switchToHttp().getRequest();
@@ -29,15 +29,14 @@ describe('Tasks (e2e)', () => {
   beforeAll(async () => {
     const uri = await startInMemoryMongo();
     const moduleRef = await Test.createTestingModule({
-      imports: [MongooseModule.forRoot(uri), FirebaseModule, TasksModule],
+      imports: [MongooseModule.forRoot(uri), ClerkModule, TasksModule],
     })
-      .overrideGuard(FirebaseAuthGuard)
+      .overrideGuard(ClerkAuthGuard)
       .useClass(StubAuthGuard)
-      // FirebaseService needs real credentials to init; the stub guard never
-      // calls it, but it is still a constructor dependency of the (replaced)
-      // FirebaseAuthGuard provider, so give it a harmless stand-in.
-      .overrideProvider(FirebaseService)
-      .useValue({ auth: {} })
+      // ClerkService needs a real secret key to construct its client, but the
+      // stub guard never calls it and tasks routes never touch ClerkService.
+      .overrideProvider(ClerkService)
+      .useValue({ client: {} })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -149,5 +148,66 @@ describe('Tasks (e2e)', () => {
     expect(res.body.byPriority).toEqual({ low: 1, medium: 1, high: 1, urgent: 1 });
     expect(res.body.completionRate).toBe(0.25);
     expect(overdue.body.priority).toBe('urgent');
+  });
+
+  it('reports completionRate 0 (not NaN) when there are zero tasks', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/tasks/stats').set('x-test-uid', USER_A).expect(200);
+    expect(res.body.total).toBe(0);
+    expect(res.body.completionRate).toBe(0);
+  });
+
+  it('reports completionRate 1 when every task is completed', async () => {
+    const a = await post(USER_A, { ...validTask, title: 'A' }).expect(201);
+    const b = await post(USER_A, { ...validTask, title: 'B' }).expect(201);
+    await request(app.getHttpServer()).patch(`/tasks/${a.body.id}/toggle`).set('x-test-uid', USER_A).expect(200);
+    await request(app.getHttpServer()).patch(`/tasks/${b.body.id}/toggle`).set('x-test-uid', USER_A).expect(200);
+
+    const res = await request(app.getHttpServer())
+      .get('/tasks/stats').set('x-test-uid', USER_A).expect(200);
+    expect(res.body.total).toBe(2);
+    expect(res.body.completed).toBe(2);
+    expect(res.body.completionRate).toBe(1);
+  });
+
+  describe('sort modes', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const toggle = (id: string) =>
+      request(app.getHttpServer()).patch(`/tasks/${id}/toggle`).set('x-test-uid', USER_A).expect(200);
+    const listSortedBy = async (sort: string) =>
+      (
+        await request(app.getHttpServer())
+          .get(`/tasks?sort=${sort}`)
+          .set('x-test-uid', USER_A)
+          .expect(200)
+      ).body.data.map((t: any) => t.id);
+
+    it('sinks completed tasks to the bottom in every mode, and orders "created" newest-first within each group', async () => {
+      // Created strictly in order A, B, C, D — small delays guarantee distinct createdAt values.
+      const a = await post(USER_A, { ...validTask, title: 'A (active)' }).expect(201);
+      await sleep(5);
+      const b = await post(USER_A, { ...validTask, title: 'B (active)' }).expect(201);
+      await sleep(5);
+      const c = await post(USER_A, { ...validTask, title: 'C (completed)' }).expect(201);
+      await sleep(5);
+      const d = await post(USER_A, { ...validTask, title: 'D (completed)' }).expect(201);
+
+      await toggle(c.body.id);
+      await toggle(d.body.id);
+
+      const activeIds = [a.body.id, b.body.id].sort();
+      const completedIds = [c.body.id, d.body.id].sort();
+
+      // Every mode must push both completed tasks below both active tasks.
+      for (const sort of ['smart', 'deadline', 'priority', 'created']) {
+        const ids = await listSortedBy(sort);
+        expect(ids.slice(0, 2).sort()).toEqual(activeIds);
+        expect(ids.slice(2).sort()).toEqual(completedIds);
+      }
+
+      // "created" additionally orders each group newest-createdAt-first: B before A, D before C.
+      const createdOrder = await listSortedBy('created');
+      expect(createdOrder).toEqual([b.body.id, a.body.id, d.body.id, c.body.id]);
+    });
   });
 });

@@ -6,10 +6,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Request } from 'express';
-import { FirebaseService } from '../../firebase/firebase.service';
+import { verifyToken } from '@clerk/backend';
+import { ClerkService } from '../../clerk/clerk.service';
 
 /**
- * Verifies the Firebase ID token on the Authorization header and attaches
+ * Verifies the Clerk session token on the Authorization header and attaches
  * the caller to `request.user`.
  *
  * Deliberately does NOT write to Mongo. Upserting a user document on every
@@ -18,10 +19,10 @@ import { FirebaseService } from '../../firebase/firebase.service';
  * guarantee the profile exists.
  */
 @Injectable()
-export class FirebaseAuthGuard implements CanActivate {
-  private readonly logger = new Logger(FirebaseAuthGuard.name);
+export class ClerkAuthGuard implements CanActivate {
+  private readonly logger = new Logger(ClerkAuthGuard.name);
 
-  constructor(private readonly firebase: FirebaseService) {}
+  constructor(private readonly clerk: ClerkService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -35,12 +36,12 @@ export class FirebaseAuthGuard implements CanActivate {
     if (!token) throw new UnauthorizedException('Empty bearer token');
 
     try {
-      const decoded = await this.firebase.auth.verifyIdToken(token);
+      const payload = await verifyToken(token, { secretKey: this.clerk.secretKey });
       request.user = {
-        uid: decoded.uid,
-        email: decoded.email ?? null,
-        displayName: decoded.name ?? null,
-        photoURL: decoded.picture ?? null,
+        uid: payload.sub,
+        email: null,
+        displayName: null,
+        photoURL: null,
       };
       return true;
     } catch (error) {
