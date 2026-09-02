@@ -43,4 +43,7 @@ async function bootstrap(): Promise<void> {
   Logger.log(`API listening on :${port}`, 'Bootstrap');
 }
 
-void bootstrap();
+bootstrap().catch((error) => {
+  Logger.error('Failed to start application', error, 'Bootstrap');
+  process.exit(1);
+});
